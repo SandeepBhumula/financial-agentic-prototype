@@ -1,0 +1,38 @@
+name: financial-ui-service
+
+include:
+  - path: ../financial-agents-service/docker-compose.yml
+    project_directory: ../financial-agents-service
+
+services:
+  web-ui:
+    container_name: financial-web-ui
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "2025:80"
+    environment:
+      - USE_API_PROXY=true
+      - DOCKER_COMPOSE=true
+    depends_on:
+      agents-api:
+        condition: service_healthy
+    networks:
+      - financial-ui-network
+      - financial-agents-network
+      - financial-card-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/status"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  financial-ui-network:
+    name: financial-ui-network
+  financial-agents-network:
+    name: financial-agents-network
+  financial-card-network:
+    name: financial-card-network 

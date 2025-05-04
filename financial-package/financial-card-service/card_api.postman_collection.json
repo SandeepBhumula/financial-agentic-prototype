@@ -1,0 +1,132 @@
+{
+  "info": {
+    "name": "Card API Service",
+    "description": "A collection of endpoints for the Card API Service",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Activate Card",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"cardLastFour\": \"8888\",\n    \"cvv\": \"123\",\n    \"expiryDate\": \"12/25\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/cards/activate",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "cards", "activate"]
+        },
+        "description": "Activate a credit or debit card using last four digits"
+      },
+      "response": []
+    },
+    {
+      "name": "Deactivate Card",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"cardLastFour\": \"8888\",\n    \"reason\": \"Card lost or stolen\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/cards/deactivate",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "cards", "deactivate"]
+        },
+        "description": "Deactivate a credit or debit card using last four digits"
+      },
+      "response": []
+    },
+    {
+      "name": "Get Card Details",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/api/cards/1",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "cards", "1"]
+        },
+        "description": "Get details for a specific card by ID"
+      },
+      "response": []
+    },
+    {
+      "name": "List All Cards",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/api/cards",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "cards"]
+        },
+        "description": "List all cards"
+      },
+      "response": []
+    },
+    {
+      "name": "Create New Card",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n    \"cardNumberHash\": \"hash123456\",\n    \"lastFourDigits\": \"2222\",\n    \"cardType\": \"VISA\",\n    \"customerId\": \"CUST123\",\n    \"expiryDate\": \"01/26\",\n    \"status\": \"INACTIVE\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8080/api/cards",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["api", "cards"]
+        },
+        "description": "Create a new card"
+      },
+      "response": []
+    },
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8080/actuator/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8080",
+          "path": ["actuator", "health"]
+        },
+        "description": "Check if the Card API service is healthy"
+      },
+      "response": []
+    }
+  ]
+} 

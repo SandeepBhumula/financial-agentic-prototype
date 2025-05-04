@@ -1,0 +1,63 @@
+name: financial-agents-service
+
+include:
+  - path: ../financial-card-service/docker-compose.yml
+    project_directory: ../financial-card-service
+
+services:
+  agents-api:
+    container_name: financial-agents-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+    volumes:
+      - ./core:/app/core
+      - ./ui:/app/ui
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./__init__.py:/app/__init__.py
+    command: uvicorn ui.api:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      card-api:
+        condition: service_healthy
+    networks:
+      - financial-agents-network
+      - financial-card-network
+
+  agents-ui:
+    container_name: financial-agents-ui
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+    volumes:
+      - ./core:/app/core
+      - ./ui:/app/ui
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./__init__.py:/app/__init__.py
+    command: streamlit run ui/app.py
+    depends_on:
+      agents-api:
+        condition: service_healthy
+    networks:
+      - financial-agents-network
+
+networks:
+  financial-agents-network:
+    name: financial-agents-network 

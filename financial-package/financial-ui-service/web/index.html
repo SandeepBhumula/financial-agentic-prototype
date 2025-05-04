@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Agents System - Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            padding: 50px;
+            background: #f5f7fa;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #1976d2;
+        }
+        .info {
+            margin: 20px 0;
+            text-align: left;
+            padding: 15px;
+            background: #e8f4fd;
+            border-radius: 5px;
+        }
+        button {
+            background-color: #1976d2;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+        }
+        button:hover {
+            background-color: #1565c0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Financial Agents System</h1>
+        <p>This is a basic test page to verify Nginx is serving content correctly.</p>
+        
+        <div class="info">
+            <h3>Diagnostic Information:</h3>
+            <ul>
+                <li>Timestamp: <span id="timestamp"></span></li>
+                <li>Nginx Server: Running</li>
+                <li>Static Content: Working</li>
+            </ul>
+        </div>
+        
+        <button onclick="testApi()">Test API Connection</button>
+        <p id="api-result"></p>
+    </div>
+
+    <script>
+        // Display current timestamp
+        document.getElementById('timestamp').textContent = new Date().toISOString();
+        
+        // Function to test API connection
+        function testApi() {
+            document.getElementById('api-result').textContent = 'Testing API connection...';
+            
+            fetch('/api/')
+                .then(response => {
+                    if (response.ok) {
+                        return response.json();
+                    }
+                    throw new Error('API request failed');
+                })
+                .then(data => {
+                    document.getElementById('api-result').textContent = 'API Connection Success: ' + JSON.stringify(data);
+                })
+                .catch(error => {
+                    document.getElementById('api-result').textContent = 'API Connection Error: ' + error.message;
+                });
+        }
+    </script>
+</body>
+</html> 

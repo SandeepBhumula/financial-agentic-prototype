@@ -1,0 +1,5 @@
+name: financial-system
+
+include:
+  - path: ./financial-ui-service/docker-compose.yml
+    project_directory: ./financial-ui-service 
