@@ -1,37 +1,90 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS base
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1
-ENV PYTHONUNBUFFERED=1
-ENV OPENAI_API_KEY=''
-ENV PYTHONPATH=/app
-
-# Install curl and git for healthchecks and dependencies
-RUN apt-get update && \
-    apt-get install -y curl git && \
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# Set common environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    POETRY_VERSION=2.1.2 \
+    POETRY_HOME=/opt/poetry \
+    POETRY_VIRTUALENVS_CREATE=false \
+    INITIALIZE_VECTOR_DB=true
 
 # Set working directory
 WORKDIR /app
 
-# Copy just the pyproject.toml and poetry.lock* files first
-COPY pyproject.toml poetry.lock* ./
+# Install system dependencies in a single layer
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    build-essential && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    # Install Poetry
+    curl -sSL https://install.python-poetry.org | python3 - && \
+    # Add Poetry to PATH
+    ln -s /opt/poetry/bin/poetry /usr/local/bin/poetry && \
+    # Verify Poetry is installed
+    poetry --version && \
+    # Create directory structure
+    mkdir -p /app/data/chroma_db && \
+    chmod -R 777 /app/data
 
-# Install Poetry 2.1.2 which is compatible with Python 3.13
-RUN pip install "poetry==2.1.2"
+# Copy only the dependency files first
+COPY pyproject.toml ./
+RUN touch README.md
 
-# Configure Poetry to not create a virtual environment
-RUN poetry config virtualenvs.create false
+# Generate lock file and install dependencies - Use the same base image
+FROM base AS dependencies
 
-# Copy the source code
+# Generate the lock file
+RUN poetry --version && poetry lock
+
+# Install main dependencies
+RUN poetry install --no-interaction --no-ansi --only main --no-root
+
+# Install UI dependencies separately to improve caching - Use the dependencies stage
+FROM dependencies AS ui-dependencies
+RUN poetry install --no-interaction --no-ansi --with ui --no-root
+
+# Final stage with minimal image
+FROM python:3.13-slim AS runtime
+
+# Set runtime environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app \
+    INITIALIZE_VECTOR_DB=true
+
+# Install minimal runtime dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    curl \
+    git && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* && \
+    mkdir -p /app/data/chroma_db && \
+    chmod -R 777 /app/data
+
+# Set working directory
+WORKDIR /app
+
+# Copy installed packages from dependency stage
+COPY --from=ui-dependencies /usr/local/lib/python3.13 /usr/local/lib/python3.13
+COPY --from=ui-dependencies /usr/local/bin /usr/local/bin
+
+# Copy entrypoint script and make executable
+COPY docker-entrypoint.sh /app/
+RUN chmod +x /app/docker-entrypoint.sh
+
+# Copy application code last to improve caching
 COPY . .
 
-# Install only the main dependencies first, then UI dependencies
-RUN pip install langgraph>=0.0.20 openai>=1.0.0 python-dotenv>=1.0.0 pydantic>=2.0.0 && \
-    pip install streamlit>=1.24.0 fastapi>=0.103.0 uvicorn>=0.23.0
-
-# Expose ports for FastAPI and Streamlit
+# Expose ports
 EXPOSE 8000 8501
 
-# Set default command to run the FastAPI app
+# Set entrypoint
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+
+# Default command
 CMD ["uvicorn", "ui.api:app", "--host", "0.0.0.0", "--port", "8000"] 

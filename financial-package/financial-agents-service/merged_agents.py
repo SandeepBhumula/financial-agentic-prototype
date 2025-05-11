@@ -1,8 +1,22 @@
+"""
+Financial Agents System - Merged Implementation
+
+This file combines three financial agent components into a single integrated system:
+
+1. Knowledge Agent: Retrieves information about financial products
+2. Card Agent: Executes card-related actions (activate, deactivate)
+3. Orchestrator Agent: Coordinates between the other agents based on user intent
+
+Each component is fully defined with its own state types, functions, and graph workflow.
+"""
+
 import os
 import json
 import logging
-from typing import TypedDict, Annotated, Sequence, Dict, Any, List, Optional
+import requests
+from typing import TypedDict, Annotated, Sequence, Dict, Any, List, Optional, Literal
 from pathlib import Path
+import operator
 
 from langgraph.graph import StateGraph, END
 from openai import OpenAI
@@ -28,18 +42,25 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 CHROMA_HOST = os.environ.get("CHROMA_HOST", "localhost")
 CHROMA_PORT = int(os.environ.get("CHROMA_PORT", "8000"))
 CHROMA_PERSIST_DIRECTORY = os.environ.get("CHROMA_PERSIST_DIRECTORY", 
-                                         os.path.join(Path(__file__).parent.parent, "data", "chroma_db"))
+                                         os.path.join(Path(__file__).parent, "data", "chroma_db"))
 USE_PERSISTENT = os.environ.get("CHROMA_USE_PERSISTENT", "true").lower() == "true"
 COLLECTION_NAME = "healthcare_financial_data"
 
 EMBEDDING_MODEL = "text-embedding-3-large"
 LLM_MODEL = "gpt-4-turbo"
-DATA_DIR = os.path.join(Path(__file__).parent.parent, 'data')
+DATA_DIR = os.path.join(Path(__file__).parent, 'data')
+
+# Card API configuration
+CARD_API_BASE_URL = "http://card-api:8080/api/cards"  # Using Docker service name
 
 # Initialize OpenAI client
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# --- Agent State ---
+#################################################
+# Knowledge Agent Implementation
+#################################################
+
+# --- Knowledge Agent State ---
 class KnowledgeAgentState(TypedDict):
     query: str
     search_results: List[Dict[str, Any]]
@@ -250,7 +271,7 @@ def get_vector_store():
         logger.error(f"Failed to initialize vector store: {e}")
         return None
 
-# --- Node Functions ---
+# --- Knowledge Agent Node Functions ---
 def retrieve_knowledge(state: KnowledgeAgentState) -> KnowledgeAgentState:
     """Retrieves relevant knowledge from the vector database based on the query."""
     logger.info(f"Retrieving knowledge for query: {state['query']}")
@@ -439,7 +460,7 @@ def generate_response(state: KnowledgeAgentState) -> KnowledgeAgentState:
     
     return {**state, "response": response}
 
-# --- Graph Definition ---
+# --- Knowledge Agent Graph Definition ---
 knowledge_workflow = StateGraph(KnowledgeAgentState)
 
 # Add nodes
@@ -472,18 +493,394 @@ def handle_query(query: str) -> str:
         logger.error(f"Error processing query: {e}")
         return f"An error occurred while processing your query: {str(e)}"
 
-# --- Example Usage (for testing) ---
+
+#################################################
+# Card Agent Implementation
+#################################################
+
+# --- Card Agent State ---
+class CardAgentState(TypedDict):
+    action: str # e.g., "activate", "deactivate"
+    card_number: str # The last four digits of the card
+    parameters: dict # Any additional parameters needed for the API call
+    api_response: dict | None # Response from the card API
+    confirmation_message: str # User-facing message
+    error: str | None
+
+# --- Card Agent Tool (API Call Function) ---
+def call_card_api(action: str, card_number: str, parameters: dict) -> dict:
+    """Calls the Card Service API."""
+    url = f"{CARD_API_BASE_URL}/{action}"
+    payload = {"cardLastFour": card_number, **parameters}
+    
+    try:
+        response = requests.post(url, json=payload, headers={'Content-Type': 'application/json'}, timeout=10)
+        api_data = response.json() if response.content else {"message": "No content"}
+        
+        if response.ok:
+            return {"success": True, **api_data}
+        
+        return {
+            "success": False,
+            "message": api_data.get("message", f"Error {response.status_code}"),
+            "status_code": response.status_code,
+            "api_response": api_data
+        }
+    except Exception as e:
+        return {"success": False, "message": f"API error: {str(e)}"}
+
+# --- Card Agent Nodes ---
+def execute_card_action(state: CardAgentState) -> CardAgentState:
+    """Executes the requested card action by calling the API."""
+    api_result = call_card_api(state['action'], state['card_number'], state['parameters'])
+    
+    if api_result.get("success"):
+        confirmation_message = api_result.get("message", f"Card {state['action']} processed successfully.")
+    else:
+        confirmation_message = f"Failed to {state['action']} card. Error: {api_result.get('message')}"
+    
+    return {
+        **state, 
+        "api_response": api_result, 
+        "confirmation_message": confirmation_message, 
+        "error": None if api_result.get("success") else api_result.get("message")
+    }
+
+# --- Card Agent Graph Definition ---
+card_workflow = StateGraph(CardAgentState)
+
+# Add node
+card_workflow.add_node("execute", execute_card_action)
+
+# Define edges
+card_workflow.set_entry_point("execute")
+card_workflow.add_edge("execute", END)
+
+# Compile graph
+card_agent_app = card_workflow.compile()
+
+
+#################################################
+# Orchestrator Agent Implementation
+#################################################
+
+# --- Orchestrator State ---
+class OrchestratorState(TypedDict):
+    user_query: str
+    intent: Literal["knowledge", "card_action", "unknown", "error"]
+    card_action_details: CardAgentState | None # Details needed for card agent
+    knowledge_agent_response: str | None
+    card_agent_response: str | None
+    final_response: str
+    error: str | None
+
+# --- Orchestrator Nodes ---
+def classify_intent(state: OrchestratorState) -> OrchestratorState:
+    """Classifies the user's intent using OpenAI."""
+    print(f"--- Orchestrator: Classifying intent for query: {state['user_query']} ---")
+    query = state['user_query']
+    intent = "unknown"
+    error = None
+    card_action_details = None
+    
+    # Initialize response fields to None
+    knowledge_agent_response = None
+    card_agent_response = None
+
+    prompt = f"""Classify the user's intent based on their query. Choose one: 'knowledge', 'card_action', or 'unknown'.
+    - 'knowledge': User is asking for information (e.g., 'What is an HSA?', 'Tell me about prepaid cards').
+    - 'card_action': User wants to perform an action on a card (e.g., 'Activate my card', 'Deactivate card ending in 1234').
+    - 'unknown': The intent is unclear or not related to finance/cards.
+
+    If the intent is 'card_action', extract the following information in JSON format:
+    - "intent": "card_action"
+    - "action": The action to perform (e.g., "activate", "deactivate")
+    - "card_identifier": Card number or last 4 digits
+    - "parameters": A dictionary of additional parameters like:
+        - "cvv": Card CVV (if provided)
+        - "expiryDate": Card expiry date in format MM/YY (if provided)
+        - "reason": Reason for deactivation (if provided)
+    
+    For example, if the user says "I want to activate my card ending in 4444 with CVV 123 and expiry date 05/26",
+    you should return:
+    {{"intent": "card_action", "action": "activate", "card_identifier": "4444", "parameters": {{"cvv": "123", "expiryDate": "05/26"}}}}
+    
+    If the intent is 'knowledge' or 'unknown', format as JSON: {{"intent": "..."}}
+
+    User Query: "{query}"
+
+    JSON Output:"""
+
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-3.5-turbo", # Use a model suitable for classification
+            messages=[
+                {"role": "system", "content": "You are an intent classification expert for financial services."},
+                {"role": "user", "content": prompt}
+            ],
+            response_format={"type": "json_object"} # Request JSON output if model supports
+        )
+        result_json = json.loads(completion.choices[0].message.content)
+        intent = result_json.get("intent", "unknown")
+        print(f"Classified intent: {intent}")
+
+        if intent == "card_action":
+            action = result_json.get("action")
+            card_identifier = result_json.get("card_identifier")
+            parameters = result_json.get("parameters", {})
+            
+            # Print the extracted parameters for debugging
+            print(f"Extracted parameters: {parameters}")
+            
+            if action and card_identifier:
+                # In a real system, you'd need more robust extraction and potentially clarification
+                card_action_details = {
+                    "action": action,
+                    "card_number": card_identifier, # May need validation/lookup
+                    "parameters": parameters, # Now properly extracting and using parameters
+                    # Initialize other CardAgentState fields as None or empty
+                    "api_response": None,
+                    "confirmation_message": "",
+                    "error": None
+                }
+                print(f"Extracted card action details: {card_action_details}")
+            else:
+                print("Warning: card_action intent detected but details missing.")
+                intent = "unknown" # Fallback if details can't be extracted
+                error = "Could not extract necessary details for the card action."
+
+    except Exception as e:
+        print(f"Error during intent classification: {e}")
+        intent = "error"
+        error = f"Failed to classify intent: {e}"
+
+    # Return a properly initialized state with all fields
+    return {
+        **state,
+        "intent": intent,
+        "card_action_details": card_action_details,
+        "knowledge_agent_response": knowledge_agent_response,
+        "card_agent_response": card_agent_response,
+        "error": error
+    }
+
+def route_to_knowledge_agent(state: OrchestratorState) -> OrchestratorState:
+    """Invokes the Knowledge Agent."""
+    print("--- Orchestrator: Routing to Knowledge Agent ---")
+    try:
+        response = handle_query(state['user_query'])
+        error = None
+        print(f"Knowledge Agent Result: {response[:100]}...")
+    except Exception as e:
+        response = "Knowledge agent did not provide a response."
+        error = str(e)
+        print(f"Knowledge Agent Error: {error}")
+    
+    return {**state, "knowledge_agent_response": response, "error": error}
+
+def route_to_card_agent(state: OrchestratorState) -> OrchestratorState:
+    """Invokes the Card Agent."""
+    print("--- Orchestrator: Routing to Card Agent ---")
+    if not state['card_action_details']:
+        error = "Cannot route to card agent: missing action details."
+        print(error)
+        return {**state, "card_agent_response": "Internal error: Missing card action details.", "error": error}
+
+    card_input = state['card_action_details']
+    card_result = card_agent_app.invoke(card_input) # Invoke with the prepared CardAgentState
+    response = card_result.get("confirmation_message", "Card agent did not provide a response.")
+    error = card_result.get("error")
+    print(f"Card Agent Result: {response[:100]}... Error: {error}")
+    return {**state, "card_agent_response": response, "error": error}
+
+def format_final_response(state: OrchestratorState) -> OrchestratorState:
+    """Formats the final response based on which agent was called."""
+    print("--- Orchestrator: Formatting final response ---")
+    
+    # Handle error condition
+    if state.get('error'):
+        if state['intent'] == 'card_action' and state.get('card_agent_response'):
+            # Use the card agent response directly if it exists
+            final_response = state['card_agent_response']
+        elif state['intent'] == 'knowledge' and state.get('knowledge_agent_response'):
+            # Use the knowledge agent response directly if it exists
+            final_response = state['knowledge_agent_response']
+        else:
+            # Generic error response if no agent-specific response is available
+            final_response = f"Sorry, I encountered an error processing your request: {state['error']}"
+    # Handle successful responses
+    elif state['intent'] == 'knowledge':
+        final_response = state.get('knowledge_agent_response', "I couldn't retrieve the information.")
+    elif state['intent'] == 'card_action':
+        final_response = state.get('card_agent_response', "The card action request could not be completed.")
+    else:
+        final_response = "I'm not sure how to handle that request. Can you please rephrase?"
+
+    print(f"Final Response: {final_response[:100]}...")
+    return {**state, "final_response": final_response}
+
+# --- Orchestrator Conditional Edges ---
+def decide_route(state: OrchestratorState) -> Literal["knowledge", "card_action", "end_error", "end_unknown"]:
+    """Determines the next step based on the classified intent."""
+    print(f"--- Orchestrator: Deciding route based on intent: {state['intent']} ---")
+    if state.get('error') and state['intent'] == 'error':
+        return "end_error"
+    elif state['intent'] == 'knowledge':
+        return "knowledge"
+    elif state['intent'] == 'card_action':
+        if state['card_action_details']: # Check if details were extracted
+             return "card_action"
+        else:
+             print("Routing to end_unknown due to missing card details despite intent.")
+             return "end_unknown" # Treat as unknown if details missing
+    else: # unknown
+        return "end_unknown"
+
+# --- Orchestrator Graph Definition ---
+workflow = StateGraph(OrchestratorState)
+
+# Add nodes
+workflow.add_node("classify_intent", classify_intent)
+workflow.add_node("knowledge_agent", route_to_knowledge_agent)
+workflow.add_node("card_agent", route_to_card_agent)
+workflow.add_node("format_response", format_final_response)
+
+# Define edges
+workflow.set_entry_point("classify_intent")
+
+# Conditional routing after classification
+workflow.add_conditional_edges(
+    "classify_intent",
+    decide_route,
+    {
+        "knowledge": "knowledge_agent",
+        "card_action": "card_agent",
+        "end_error": "format_response", # Go directly to formatting for critical errors
+        "end_unknown": "format_response" # Go directly to formatting for unknown intent
+    }
+)
+
+# Edges from agents to final formatting
+workflow.add_edge("knowledge_agent", "format_response")
+workflow.add_edge("card_agent", "format_response")
+
+# End after formatting
+workflow.add_edge("format_response", END)
+
+# Compile graph
+orchestrator_app = workflow.compile()
+
+
+#################################################
+# Testing Functions
+#################################################
+
+def test_knowledge_agent(query: str):
+    """Test the knowledge agent with a query."""
+    print(f"\n--- Testing Knowledge Agent with query: {query} ---")
+    
+    initial_state = {
+        "query": query,
+        "search_results": [],
+        "response": "",
+        "error": None,
+        "account_types": [],
+        "intent": None
+    }
+    
+    try:
+        result = knowledge_agent.invoke(initial_state)
+        print("\n--- Knowledge Agent Result ---")
+        print(f"Response: {result['response']}")
+        return result
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"response": f"Error: {e}", "error": str(e)}
+
+def test_card_agent(action: str, card_number: str, parameters: dict = None):
+    """Test the card agent with specified action and parameters."""
+    if parameters is None:
+        parameters = {}
+    
+    print(f"\n--- Testing Card Agent: {action} for card {card_number} ---")
+    
+    initial_state = {
+        "action": action,
+        "card_number": card_number,
+        "parameters": parameters,
+        "api_response": None,
+        "confirmation_message": "",
+        "error": None
+    }
+    
+    try:
+        result = card_agent_app.invoke(initial_state)
+        print("\n--- Card Agent Result ---")
+        print(f"Confirmation: {result.get('confirmation_message')}")
+        if result.get('error'):
+            print(f"Error: {result.get('error')}")
+        return result
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"confirmation_message": f"Error: {e}", "error": str(e)}
+
+def test_orchestrator(query: str):
+    """Test the orchestrator with a user query."""
+    print(f"\n--- Testing Orchestrator with query: {query} ---")
+    
+    initial_state = {
+        "user_query": query,
+        "intent": "unknown",
+        "card_action_details": None,
+        "knowledge_agent_response": None,
+        "card_agent_response": None,
+        "final_response": "",
+        "error": None
+    }
+    
+    try:
+        result = orchestrator_app.invoke(initial_state)
+        print("\n--- Orchestrator Result ---")
+        print(f"Intent: {result['intent']}")
+        print(f"Final Response: {result['final_response']}")
+        return result
+    except Exception as e:
+        print(f"Error: {e}")
+        return {"final_response": f"Error: {e}", "error": str(e)}
+
+
+#################################################
+# Example Usage
+#################################################
+
 if __name__ == "__main__":
-    print("Testing Knowledge Agent with Vector DB...")
-    test_queries = [
-        "What is the contribution limit for an HSA in 2024?",
-        "Can I use my FSA for vision care?",
-        "What's the difference between an HSA and FSA?",
-        "Am I eligible for an HSA if I have Medicare?",
-        "How does a prepaid healthcare card work?"
+    print("\n=====================================")
+    print("FINANCIAL AGENTS SYSTEM - MERGED DEMO")
+    print("=====================================\n")
+    
+    # Test Knowledge Agent
+    print("\n----- KNOWLEDGE AGENT DEMO -----\n")
+    knowledge_queries = [
+        "What is an HSA account?",
+        "What's the contribution limit for FSA in 2024?",
+        "How do prepaid healthcare cards work?"
     ]
     
-    for test_query in test_queries:
-        print(f"\nQuery: {test_query}")
-        response = handle_query(test_query)
-        print(f"Response: {response}") 
+    for query in knowledge_queries:
+        test_knowledge_agent(query)
+    
+    # Test Card Agent
+    print("\n----- CARD AGENT DEMO -----\n")
+    test_card_agent("activate", "1234", {"cvv": "123", "expiryDate": "12/25"})
+    test_card_agent("deactivate", "5678", {"reason": "Lost card"})
+    
+    # Test Orchestrator
+    print("\n----- ORCHESTRATOR DEMO -----\n")
+    orchestrator_queries = [
+        "What are the benefits of an HSA account?",
+        "Activate my card ending in 1234 with CVV 123",
+        "What's the weather today?"
+    ]
+    
+    for query in orchestrator_queries:
+        test_orchestrator(query) 

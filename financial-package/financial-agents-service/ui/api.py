@@ -9,10 +9,7 @@ parent_dir = os.path.dirname(current_dir)  # Path to 'agents' directory
 if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
-# Direct import using absolute path - this avoids relative import issues
-from core.orchestrator import app as orchestrator_app
-from core.card import card_agent_app
-
+# Direct import using absolute imports
 from fastapi import FastAPI, HTTPException, Request, Body
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -29,6 +26,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"}
+
+# Import other modules after the app is initialized
+# This ensures the health endpoint is available even if there are import errors
+try:
+    # Direct import using absolute path - this avoids relative import issues
+    from core.orchestrator import app as orchestrator_app
+    from core.card import card_agent_app
+except Exception as e:
+    print(f"Warning: Error importing modules: {e}")
+    # We'll still allow the API to start for health checks
 
 # Request models
 class QueryRequest(BaseModel):

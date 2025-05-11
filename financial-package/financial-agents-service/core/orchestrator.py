@@ -5,7 +5,7 @@ from langgraph.graph import StateGraph, END
 from openai import OpenAI
 
 # Import agent apps (assuming they are runnable)
-from core.knowledge import knowledge_agent_app, KnowledgeAgentState # Use relative import
+from core.knowledge import knowledge_agent, KnowledgeAgentState # Use relative import
 from core.card import card_agent_app, CardAgentState # Use relative import
 
 # Environment variable loading
@@ -117,11 +117,15 @@ def classify_intent(state: OrchestratorState) -> OrchestratorState:
 def route_to_knowledge_agent(state: OrchestratorState) -> OrchestratorState:
     """Invokes the Knowledge Agent."""
     print("--- Orchestrator: Routing to Knowledge Agent ---")
-    knowledge_input = {"query": state['user_query']}
-    knowledge_result = knowledge_agent_app.invoke(knowledge_input)
-    response = knowledge_result.get("response", "Knowledge agent did not provide a response.")
-    error = knowledge_result.get("error")
-    print(f"Knowledge Agent Result: {response[:100]}... Error: {error}")
+    try:
+        response = handle_query(state['user_query'])
+        error = None
+        print(f"Knowledge Agent Result: {response[:100]}...")
+    except Exception as e:
+        response = "Knowledge agent did not provide a response."
+        error = str(e)
+        print(f"Knowledge Agent Error: {error}")
+    
     return {**state, "knowledge_agent_response": response, "error": error}
 
 def route_to_card_agent(state: OrchestratorState) -> OrchestratorState:
@@ -181,6 +185,9 @@ def decide_route(state: OrchestratorState) -> Literal["knowledge", "card_action"
              return "end_unknown" # Treat as unknown if details missing
     else: # unknown
         return "end_unknown"
+
+# Import the handle_query function from knowledge
+from core.knowledge import handle_query
 
 # --- Graph Definition ---
 import json # Need json for the classifier node

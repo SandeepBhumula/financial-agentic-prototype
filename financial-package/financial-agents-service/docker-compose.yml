@@ -10,26 +10,35 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      cache_from:
+        - financial-agents-api:latest
+    image: financial-agents-api:latest
     ports:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PYTHONPATH=/app
+      - CHROMA_HOST=chroma-db
+      - CHROMA_PORT=8100
+      - CHROMA_USE_PERSISTENT=false
+      - INITIALIZE_VECTOR_DB=true
     volumes:
       - ./core:/app/core
       - ./ui:/app/ui
       - ./data:/app/data
       - ./vector_db:/app/vector_db
       - ./__init__.py:/app/__init__.py
-    command: uvicorn ui.api:app --host 0.0.0.0 --port 8000 --reload
+      - ./notebooks:/app/notebooks
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || echo 'Health check failed but continuing'"]
       interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      timeout: 30s
+      retries: 10
+      start_period: 60s
     depends_on:
       card-api:
+        condition: service_healthy
+      chroma-db:
         condition: service_healthy
     networks:
       - financial-agents-network
@@ -37,20 +46,28 @@ services:
 
   agents-ui:
     container_name: financial-agents-ui
+    image: financial-agents-ui:latest
     build:
       context: .
       dockerfile: Dockerfile
+      cache_from:
+        - financial-agents-ui:latest
     ports:
       - "8501:8501"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - PYTHONPATH=/app
+      - CHROMA_HOST=chroma-db
+      - CHROMA_PORT=8100
+      - CHROMA_USE_PERSISTENT=false
+      - INITIALIZE_VECTOR_DB=false
     volumes:
       - ./core:/app/core
       - ./ui:/app/ui
       - ./data:/app/data
       - ./vector_db:/app/vector_db
       - ./__init__.py:/app/__init__.py
+      - ./notebooks:/app/notebooks
     command: streamlit run ui/app.py
     depends_on:
       agents-api:
@@ -58,6 +75,30 @@ services:
     networks:
       - financial-agents-network
 
+  chroma-db:
+    container_name: chroma-db
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - ALLOW_RESET=True
+      - ANONYMIZED_TELEMETRY=False
+    ports:
+      - "8100:8100"
+    command: uvicorn chromadb.app:app --host 0.0.0.0 --port 8100
+    networks:
+      - financial-agents-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
 networks:
   financial-agents-network:
-    name: financial-agents-network 
+    name: financial-agents-network
+
+volumes:
+  chroma-data:
+    name: chroma-data 

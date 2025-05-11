@@ -7,7 +7,7 @@ __version__ = "0.1.0"
 # Import main components
 from .core.orchestrator import app as orchestrator_app
 from .core.card import card_agent_app
-from .core.knowledge import knowledge_agent_app
+from .core.knowledge import knowledge_agent
 
 # Make modules accessible
 from . import core
@@ -18,7 +18,7 @@ from . import vector_db
 __all__ = [
     'orchestrator_app', 
     'card_agent_app', 
-    'knowledge_agent_app',
+    'knowledge_agent',
     'core',
     'data',
     'ui',
