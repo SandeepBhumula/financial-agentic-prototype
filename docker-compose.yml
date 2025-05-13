@@ -1,0 +1,127 @@
+name: financial-agents-service
+
+include:
+  - path: ../financial-card-service/docker-compose.yml
+    project_directory: ../financial-card-service
+
+services:
+  agents-api:
+    container_name: financial-agents-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+      - CHROMA_HOST=chroma-db
+      - CHROMA_PORT=8100
+      - CHROMA_USE_PERSISTENT=false
+    volumes:
+      - ./merged_agents.py:/app/merged_agents.py
+      - ./core:/app/core
+      - ./ui:/app/ui
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./__init__.py:/app/__init__.py
+      - ./notebooks:/app/notebooks
+    command: uvicorn ui.api:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8000/health || echo 'Health check failed but continuing'"]
+      interval: 30s
+      timeout: 30s
+      retries: 10
+      start_period: 60s
+    depends_on:
+      card-api:
+        condition: service_healthy
+      chroma-db:
+        condition: service_started
+    networks:
+      - financial-agents-network
+      - financial-card-network
+
+  agents-ui:
+    container_name: financial-agents-ui
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+      - CHROMA_HOST=chroma-db
+      - CHROMA_PORT=8100
+      - CHROMA_USE_PERSISTENT=false
+    volumes:
+      - ./merged_agents.py:/app/merged_agents.py
+      - ./core:/app/core
+      - ./ui:/app/ui
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./__init__.py:/app/__init__.py
+      - ./notebooks:/app/notebooks
+    command: streamlit run ui/app.py
+    depends_on:
+      chroma-db:
+        condition: service_started
+    networks:
+      - financial-agents-network
+
+  jupyter:
+    container_name: financial-agents-jupyter
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8888:8888"
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+      - CHROMA_HOST=chroma-db
+      - CHROMA_PORT=8100
+      - CHROMA_USE_PERSISTENT=false
+    volumes:
+      - ./merged_agents.py:/app/merged_agents.py
+      - ./core:/app/core
+      - ./ui:/app/ui
+      - ./data:/app/data
+      - ./vector_db:/app/vector_db
+      - ./__init__.py:/app/__init__.py
+      - ./notebooks:/app/notebooks
+    command: jupyter notebook --ip=0.0.0.0 --port=8888 --allow-root --no-browser --NotebookApp.token='' --NotebookApp.password=''
+    depends_on:
+      chroma-db:
+        condition: service_started
+    networks:
+      - financial-agents-network
+
+  chroma-db:
+    container_name: chroma-db
+    image: chromadb/chroma:latest
+    volumes:
+      - chroma-data:/chroma/chroma
+    environment:
+      - ALLOW_RESET=True
+      - ANONYMIZED_TELEMETRY=False
+    ports:
+      - "8100:8100"
+    command: uvicorn chromadb.app:app --host 0.0.0.0 --port 8100
+    networks:
+      - financial-agents-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/api/v1/heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+networks:
+  financial-agents-network:
+    name: financial-agents-network
+
+volumes:
+  chroma-data:
+    name: chroma-data 

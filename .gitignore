@@ -22,6 +22,7 @@ target/
 
 # Docker
 .env
+**/.env
 docker-volume/
 
 # Logs
@@ -44,6 +45,7 @@ env/
 .env.development.local
 .env.test.local
 .env.production.local
+**/.env.*
 
 # Jupyter Notebook
 .ipynb_checkpoints
@@ -56,4 +58,4 @@ sdist/
 
 # Local development configuration
 /config/development.json
-/config/local.json 
+/config/local.json
