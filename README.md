@@ -18,7 +18,7 @@ This project implements a microservices-based financial system with AI-powered a
 
 ## Demo Video
 
-<video src="project_demo.mov" controls></video>
+<video src="project_demo_compressed.mov" controls></video>
 
 *Note: The video demo shows the complete system in action with all three components of the orchestration layer: product knowledge base integration, account knowledge base integration, and card functions.*
 
